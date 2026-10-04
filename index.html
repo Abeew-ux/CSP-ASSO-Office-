@@ -56,9 +56,10 @@ const ANNEE = '2026-2027';
 const $ = (i) => document.getElementById(i);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const mat = (c, n) => `${c}-${String(n).padStart(3, '0')}`;
-const PARENT = { classe: 'home', addclasse: 'home', eleves: 'classe', notes: 'classe', matieres: 'classe' };
+const TYPES = [['interrogation', 'Interrogation'], ['devoir', 'Devoir'], ['composition', 'Composition']];
+const PARENT = { classe: 'home', addclasse: 'home', eleves: 'classe', notes: 'classe', matieres: 'classe', personnel: 'home' };
 
-let token = null, me = null, classes = [], eleves = [], matieres = [], codes = [], S = { v: 'home', classe: null, matiere: null, tri: 'T1' };
+let token = null, me = null, classes = [], eleves = [], matieres = [], codes = [], equipe = [], S = { v: 'home', classe: null, matiere: null, tri: 'T1', type: 'interrogation', num: 1 };
 const admin = () => me && me.role === 'admin';
 const clCourante = () => classes.find((c) => c.nom === S.classe);
 
@@ -106,7 +107,7 @@ function quitter() {
 }
 async function demarrer(userId) {
   try {
-    const p = await rest(`personnel?select=nom,role&id=eq.${userId}`);
+    const p = await rest(`personnel?select=nom,role,identifiant&id=eq.${userId}`);
     if (!p.length) { quitter(); return erreur("Ce compte n'a pas accès à l'espace du personnel."); }
     me = p[0];
     $('qui').textContent = `${me.nom} · ${admin() ? 'administration' : 'enseignant'}`;
@@ -126,16 +127,16 @@ async function charger() {
 /* ---------- navigation ---------- */
 function aller(v, classe) {
   if (classe !== undefined) S.classe = classe;
-  if (v === 'notes' && S.v !== 'notes') { S.matiere = null; S.tri = 'T1'; }
-  if (v !== 'eleves') codes = [];
+  if (v === 'notes' && S.v !== 'notes') { S.matiere = null; S.tri = 'T1'; S.type = 'interrogation'; S.num = 1; }
+  if (v !== 'eleves' && v !== 'personnel') codes = [];
   S.v = v; rendre();
 }
 function rendre() {
   const c = $('contenu'), cl = clCourante();
   $('retour').classList.toggle('hidden', S.v === 'home');
-  $('titre').textContent = S.v === 'home' ? 'CSP/ASSO Office' : S.v === 'addclasse' ? 'Nouvelle classe' : S.classe;
-  if (S.v !== 'home' && S.v !== 'addclasse' && !cl) return aller('home');
-  ({ home: vHome, classe: vClasse, eleves: vEleves, notes: vNotes, matieres: vMatieres, addclasse: vAddClasse })[S.v](c, cl);
+  $('titre').textContent = S.v === 'home' ? 'CSP/ASSO Office' : S.v === 'addclasse' ? 'Nouvelle classe' : S.v === 'personnel' ? 'Personnel' : S.classe;
+  if (S.v !== 'home' && S.v !== 'addclasse' && S.v !== 'personnel' && !cl) return aller('home');
+  ({ home: vHome, classe: vClasse, eleves: vEleves, notes: vNotes, matieres: vMatieres, addclasse: vAddClasse, personnel: vPersonnel })[S.v](c, cl);
 }
 
 /* ---------- accueil : une case par classe ---------- */
@@ -144,7 +145,7 @@ function vHome(c) {
     const n = eleves.filter((e) => e.classe === x.nom).length;
     return `<button data-go="classe" data-classe="${esc(x.nom)}" class="bg-white rounded-xl shadow p-4 text-left border-t-4 border-blue-600 active:bg-blue-50">
       <div class="font-bold text-lg">${esc(x.nom)}</div><div class="text-xs text-gray-500">${n} élève(s)</div></button>`;
-  }).join('') + (admin() ? '<button data-go="addclasse" class="rounded-xl border-2 border-dashed border-gray-300 text-gray-500 p-4">+ Ajouter une classe</button>' : '') + '</div>' +
+  }).join('') + (admin() ? '<button data-go="addclasse" class="rounded-xl border-2 border-dashed border-gray-300 text-gray-500 p-4">+ Ajouter une classe</button><button data-go="personnel" class="rounded-xl bg-blue-900 text-white p-4 text-left"><div class="font-bold"><i class="fa-solid fa-users mr-2"></i>Personnel</div><div class="text-xs opacity-80">Comptes des enseignants</div></button>' : '') + '</div>' +
   (classes.length ? '' : '<p class="text-center text-gray-500 mt-6">Aucune classe pour le moment.</p>');
 }
 
@@ -245,14 +246,17 @@ async function vNotes(c, cl) {
     <p class="text-sm font-medium mb-2">Matière</p>
     <div class="flex flex-wrap gap-2 mb-4">${ms.map((m) => chip('data-mat', m.nom, m.nom, m.nom === S.matiere)).join('')}${admin() ? '<button data-go="matieres" class="px-3 py-1.5 rounded-lg text-sm border border-dashed text-gray-500">+ Matière</button>' : ''}</div>
     <p class="text-sm font-medium mb-2">Trimestre</p>
-    <div class="flex gap-2">${['T1', 'T2', 'T3'].map((t) => chip('data-tri', t, t, t === S.tri)).join('')}</div></div><div id="liste-notes"></div>`;
+    <div class="flex gap-2 mb-4">${['T1', 'T2', 'T3'].map((t) => chip('data-tri', t, t, t === S.tri)).join('')}</div>
+    <p class="text-sm font-medium mb-2">Évaluation</p>
+    <div class="flex flex-wrap gap-2 mb-3">${TYPES.map(([v, t]) => chip('data-type', v, t, v === S.type)).join('')}</div>
+    <div class="flex gap-2">${[1, 2, 3, 4].map((n) => chip('data-num', n, `N° ${n}`, n === S.num)).join('')}</div></div><div id="liste-notes"></div>`;
   const zone = $('liste-notes');
   if (!ms.length) return zone.innerHTML = '<p class="text-center text-gray-500">Aucune matière pour cette classe.' + (admin() ? ' Ajoute-en avec « + Matière ».' : ' Demande à l\'administration d\'en ajouter.') + '</p>';
   if (!S.matiere) return zone.innerHTML = '<p class="text-center text-gray-500">Choisis une matière.</p>';
   const el = eleves.filter((e) => e.classe === cl.nom).sort((a, b) => (a.nom + a.prenom).localeCompare(b.nom + b.prenom, 'fr'));
   if (!el.length) return zone.innerHTML = '<p class="text-center text-gray-500">Aucun élève dans cette classe.</p>';
   let ex = [];
-  try { ex = await rest(`notes?select=eleve_id,note&matiere=eq.${encodeURIComponent(S.matiere)}&trimestre=eq.${S.tri}&annee_scolaire=eq.${ANNEE}&eleve_id=in.(${el.map((e) => e.id).join(',')})`); }
+  try { ex = await rest(`notes?select=eleve_id,note&matiere=eq.${encodeURIComponent(S.matiere)}&trimestre=eq.${S.tri}&type=eq.${S.type}&numero=eq.${S.num}&annee_scolaire=eq.${ANNEE}&eleve_id=in.(${el.map((e) => e.id).join(',')})`); }
   catch (e) { if (e.message === 'session') return; flash('Impossible de charger les notes.', false); }
   const par = Object.fromEntries(ex.map((x) => [x.eleve_id, x.note]));
   zone.innerHTML = `<div class="bg-white rounded-xl shadow overflow-hidden divide-y">${el.map((e) => `<div class="flex items-center gap-3 px-3 py-2">
@@ -268,14 +272,14 @@ async function saveNotes() {
     if (v === '') { if (o !== '') suppr.push(i.dataset.e); return; }
     const n = Number(v);
     if (!isFinite(n) || n < 0 || n > 20) return err.push(i.closest('div').querySelector('span').textContent.trim());
-    if (o === '' || n !== Number(o)) ajouts.push({ eleve_id: i.dataset.e, matiere: S.matiere, trimestre: S.tri, annee_scolaire: ANNEE, note: n, coefficient: m ? m.coefficient : 1 });
+    if (o === '' || n !== Number(o)) ajouts.push({ eleve_id: i.dataset.e, matiere: S.matiere, trimestre: S.tri, type: S.type, numero: S.num, annee_scolaire: ANNEE, note: n, coefficient: m ? m.coefficient : 1 });
   });
   if (err.length) return flash(`Note invalide (0 à 20) : ${err.slice(0, 3).join(', ')}`, false);
   if (!ajouts.length && !suppr.length) return flash('Rien à enregistrer.', false);
   flash('Enregistrement…', true);
   try {
-    await Promise.all(suppr.map((id) => rest(`notes?eleve_id=eq.${id}&matiere=eq.${encodeURIComponent(S.matiere)}&trimestre=eq.${S.tri}&annee_scolaire=eq.${ANNEE}`, { method: 'DELETE' })));
-    if (ajouts.length) await rest('notes?on_conflict=eleve_id,matiere,trimestre,annee_scolaire', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(ajouts) });
+    await Promise.all(suppr.map((id) => rest(`notes?eleve_id=eq.${id}&matiere=eq.${encodeURIComponent(S.matiere)}&trimestre=eq.${S.tri}&type=eq.${S.type}&numero=eq.${S.num}&annee_scolaire=eq.${ANNEE}`, { method: 'DELETE' })));
+    if (ajouts.length) await rest('notes?on_conflict=eleve_id,matiere,trimestre,annee_scolaire,type,numero', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(ajouts) });
     await vNotes($('contenu'), cl); flash(`Notes enregistrées (${ajouts.length + suppr.length} modification(s)).`, true);
   } catch (e) { if (e.message !== 'session') flash(e.message, false); }
 }
@@ -332,6 +336,27 @@ async function supprimerClasse() {
   catch (e) { if (e.message !== 'session') alert(e.message); }
 }
 
+
+/* ---------- personnel (admin) ---------- */
+async function vPersonnel(c) {
+  if (!admin()) return aller('home');
+  try { equipe = await rest('personnel?select=id,identifiant,nom,role&order=nom.asc'); } catch (e) { if (e.message === 'session') return; }
+  c.innerHTML = FL + (codes.length ? `<div class="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4"><p class="font-bold">${esc(codes[0].nom)}</p>
+    <p class="text-sm">Identifiant : <b>${esc(codes[0].identifiant)}</b></p><p class="text-sm">Code : <b class="text-lg tracking-widest">${esc(codes[0].code)}</b></p>
+    <p class="text-xs text-red-600 mt-1">Note ce code maintenant : il ne sera plus affiché.</p></div>` : '') +
+    `<div class="bg-white rounded-xl shadow overflow-hidden divide-y mb-5">${equipe.map((p) => `<div class="flex items-center justify-between px-4 py-3 gap-2">
+    <span class="min-w-0"><span class="font-medium">${esc(p.nom)}</span> <span class="text-xs text-gray-400">${esc(p.identifiant)} · ${p.role === 'admin' ? 'administration' : 'enseignant'}</span></span>
+    <span class="shrink-0"><button data-resetp="${esc(p.identifiant)}" class="text-blue-600 px-2" aria-label="Nouveau code"><i class="fa-solid fa-key"></i></button>${p.identifiant === (me.identifiant || '') ? '' : `<button data-delp="${esc(p.identifiant)}" class="text-red-500 px-2" aria-label="Supprimer"><i class="fa-solid fa-trash"></i></button>`}</span></div>`).join('')}</div>
+    <div class="bg-white rounded-xl shadow p-4"><h2 class="font-bold mb-3">Ajouter un compte</h2>
+      <label class="block text-xs font-medium mb-1" for="p-nom">Nom complet</label><input id="p-nom" maxlength="60" placeholder="ex. Abdou Moussa" class="w-full border rounded-lg px-3 py-2 mb-3">
+      <label class="block text-xs font-medium mb-1" for="p-role">Rôle</label><select id="p-role" class="w-full border rounded-lg px-3 py-2 mb-3"><option value="prof">Enseignant (saisit les notes)</option><option value="admin">Administration (tout faire)</option></select>
+      <button data-act="add-pers" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg">Créer le compte</button></div>`;
+}
+async function persAction(action, body, ok) {
+  try { const d = await api(action, body); codes = d.code ? [d] : []; await vPersonnel($('contenu')); flash(ok, true); }
+  catch (e) { if (e.message !== 'session') flash(e.message, false); }
+}
+
 /* ---------- évènements ---------- */
 $('btn-login').addEventListener('click', connexion);
 $('code').addEventListener('keydown', (e) => e.key === 'Enter' && connexion());
@@ -343,11 +368,16 @@ document.addEventListener('click', (e) => {
   if ((x = t('[data-go]'))) return aller(x.dataset.go, x.dataset.classe);
   if ((x = t('[data-mat]'))) { S.matiere = x.dataset.mat; return rendre(); }
   if ((x = t('[data-tri]'))) { S.tri = x.dataset.tri; return rendre(); }
+  if ((x = t('[data-type]'))) { S.type = x.dataset.type; S.num = 1; return rendre(); }
+  if ((x = t('[data-num]'))) { S.num = Number(x.dataset.num); return rendre(); }
+  if ((x = t('[data-resetp]'))) return confirm('Créer un nouveau code pour ce compte ?') && persAction('reset_personnel', { identifiant: x.dataset.resetp }, 'Nouveau code créé.');
+  if ((x = t('[data-delp]'))) return confirm('Supprimer ce compte ?') && persAction('supprimer_personnel', { identifiant: x.dataset.delp }, 'Compte supprimé.');
   if ((x = t('[data-reset]'))) return resetCode(x.dataset.reset);
   if ((x = t('[data-del]'))) return supprimerEleve(x.dataset.del);
   if ((x = t('[data-delmat]'))) return delMatiere(x.dataset.delmat);
   if ((x = t('[data-act]'))) {
     const a = x.dataset.act;
+    if (a === 'add-pers') return persAction('creer_personnel', { nom: $('p-nom').value, role: $('p-role').value }, 'Compte créé.');
     if (a === 'save-eleves') return saveEleves();
     if (a === 'save-notes') return saveNotes();
     if (a === 'add-matiere') return addMatiere();
