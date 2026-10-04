@@ -57,9 +57,9 @@ const $ = (i) => document.getElementById(i);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const mat = (c, n) => `${c}-${String(n).padStart(3, '0')}`;
 const TYPES = [['interrogation', 'Interrogation'], ['devoir', 'Devoir'], ['composition', 'Composition']];
-const PARENT = { classe: 'home', addclasse: 'home', eleves: 'classe', notes: 'classe', matieres: 'classe', personnel: 'home' };
+const PARENT = { classe: 'home', addclasse: 'home', eleves: 'classe', notes: 'classe', matieres: 'classe', personnel: 'home', affect: 'personnel', annonces: 'home', inscriptions: 'home' };
 
-let token = null, me = null, classes = [], eleves = [], matieres = [], codes = [], equipe = [], S = { v: 'home', classe: null, matiere: null, tri: 'T1', type: 'interrogation', num: 1 };
+let token = null, me = null, classes = [], eleves = [], matieres = [], codes = [], equipe = [], aff = [], actus = [], inscr = [], S = { v: 'home', classe: null, matiere: null, tri: 'T1', type: 'interrogation', num: 1 };
 const admin = () => me && me.role === 'admin';
 const clCourante = () => classes.find((c) => c.nom === S.classe);
 
@@ -107,7 +107,7 @@ function quitter() {
 }
 async function demarrer(userId) {
   try {
-    const p = await rest(`personnel?select=nom,role,identifiant&id=eq.${userId}`);
+    const p = await rest(`personnel?select=id,nom,role,identifiant&id=eq.${userId}`);
     if (!p.length) { quitter(); return erreur("Ce compte n'a pas accès à l'espace du personnel."); }
     me = p[0];
     $('qui').textContent = `${me.nom} · ${admin() ? 'administration' : 'enseignant'}`;
@@ -117,26 +117,28 @@ async function demarrer(userId) {
   } catch (e) { if (e.message !== 'session') { quitter(); erreur('Impossible de charger tes données.'); } }
 }
 async function charger() {
-  [classes, eleves, matieres] = await Promise.all([
+  [classes, eleves, matieres, aff] = await Promise.all([
     rest('classes?select=code,nom,effectif&order=ordre.asc,nom.asc'),
     rest('eleves?select=id,matricule,nom,prenom,classe&order=matricule.asc&limit=2000'),
     rest('matieres?select=id,classe_code,nom,coefficient&order=ordre.asc,nom.asc'),
+    rest('personnel_affectations?select=personnel_id,classe_code,matiere&limit=5000').catch(() => []),
   ]);
+  if (!admin()) { const mes = aff.filter((a) => a.personnel_id === me.id); classes = classes.filter((c) => mes.some((a) => a.classe_code === c.code)); eleves = eleves.filter((e) => classes.some((c) => c.nom === e.classe)); }
 }
 
 /* ---------- navigation ---------- */
 function aller(v, classe) {
   if (classe !== undefined) S.classe = classe;
   if (v === 'notes' && S.v !== 'notes') { S.matiere = null; S.tri = 'T1'; S.type = 'interrogation'; S.num = 1; }
-  if (v !== 'eleves' && v !== 'personnel') codes = [];
+  if (v !== 'eleves' && v !== 'personnel' && v !== 'affect') codes = [];
   S.v = v; rendre();
 }
 function rendre() {
   const c = $('contenu'), cl = clCourante();
   $('retour').classList.toggle('hidden', S.v === 'home');
-  $('titre').textContent = S.v === 'home' ? 'CSP/ASSO Office' : S.v === 'addclasse' ? 'Nouvelle classe' : S.v === 'personnel' ? 'Personnel' : S.classe;
-  if (S.v !== 'home' && S.v !== 'addclasse' && S.v !== 'personnel' && !cl) return aller('home');
-  ({ home: vHome, classe: vClasse, eleves: vEleves, notes: vNotes, matieres: vMatieres, addclasse: vAddClasse, personnel: vPersonnel })[S.v](c, cl);
+  $('titre').textContent = S.v === 'home' ? 'CSP/ASSO Office' : S.v === 'addclasse' ? 'Nouvelle classe' : S.v === 'personnel' ? 'Personnel' : S.v === 'affect' ? 'Classes et matières' : S.v === 'annonces' ? 'Annonces' : S.v === 'inscriptions' ? 'Inscriptions' : S.classe;
+  if (S.v !== 'home' && S.v !== 'addclasse' && !['personnel','affect','annonces','inscriptions'].includes(S.v) && !cl) return aller('home');
+  ({ home: vHome, classe: vClasse, eleves: vEleves, notes: vNotes, matieres: vMatieres, addclasse: vAddClasse, personnel: vPersonnel, affect: vAffect, annonces: vAnnonces, inscriptions: vInscriptions })[S.v](c, cl);
 }
 
 /* ---------- accueil : une case par classe ---------- */
@@ -145,7 +147,8 @@ function vHome(c) {
     const n = eleves.filter((e) => e.classe === x.nom).length;
     return `<button data-go="classe" data-classe="${esc(x.nom)}" class="bg-white rounded-xl shadow p-4 text-left border-t-4 border-blue-600 active:bg-blue-50">
       <div class="font-bold text-lg">${esc(x.nom)}</div><div class="text-xs text-gray-500">${n} élève(s)</div></button>`;
-  }).join('') + (admin() ? '<button data-go="addclasse" class="rounded-xl border-2 border-dashed border-gray-300 text-gray-500 p-4">+ Ajouter une classe</button><button data-go="personnel" class="rounded-xl bg-blue-900 text-white p-4 text-left"><div class="font-bold"><i class="fa-solid fa-users mr-2"></i>Personnel</div><div class="text-xs opacity-80">Comptes des enseignants</div></button>' : '') + '</div>' +
+  }).join('') + (admin() ? '<button data-go="addclasse" class="rounded-xl border-2 border-dashed border-gray-300 text-gray-500 p-4">+ Ajouter une classe</button>' : '') +
+  (admin() ? '<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">' + [['personnel','fa-users','Personnel','Enseignants, classes et matières'],['annonces','fa-bullhorn','Annonces','Actualités du site'],['inscriptions','fa-inbox','Inscriptions','Demandes reçues']].map(([v,i,t,d]) => `<button data-go="${v}" class="rounded-xl bg-blue-900 text-white p-4 text-left active:bg-blue-800"><div class="font-bold"><i class="fa-solid ${i} mr-2"></i>${t}</div><div class="text-xs opacity-80">${d}</div></button>`).join('') + '</div>' : '') + '</div>' +
   (classes.length ? '' : '<p class="text-center text-gray-500 mt-6">Aucune classe pour le moment.</p>');
 }
 
@@ -241,7 +244,7 @@ async function resetCode(m) {
 /* ---------- notes ---------- */
 const chip = (att, val, txt, actif) => `<button ${att}="${esc(val)}" class="px-3 py-1.5 rounded-lg text-sm border ${actif ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'}">${esc(txt)}</button>`;
 async function vNotes(c, cl) {
-  const ms = matieres.filter((m) => m.classe_code === cl.code);
+  const ms = matieres.filter((m) => m.classe_code === cl.code && (admin() || aff.some((a) => a.personnel_id === me.id && a.classe_code === cl.code && a.matiere === m.nom)));
   c.innerHTML = FL + `<div class="bg-white rounded-xl shadow p-4 mb-4">
     <p class="text-sm font-medium mb-2">Matière</p>
     <div class="flex flex-wrap gap-2 mb-4">${ms.map((m) => chip('data-mat', m.nom, m.nom, m.nom === S.matiere)).join('')}${admin() ? '<button data-go="matieres" class="px-3 py-1.5 rounded-lg text-sm border border-dashed text-gray-500">+ Matière</button>' : ''}</div>
@@ -345,16 +348,82 @@ async function vPersonnel(c) {
     <p class="text-sm">Identifiant : <b>${esc(codes[0].identifiant)}</b></p><p class="text-sm">Code : <b class="text-lg tracking-widest">${esc(codes[0].code)}</b></p>
     <p class="text-xs text-red-600 mt-1">Note ce code maintenant : il ne sera plus affiché.</p></div>` : '') +
     `<div class="bg-white rounded-xl shadow overflow-hidden divide-y mb-5">${equipe.map((p) => `<div class="flex items-center justify-between px-4 py-3 gap-2">
-    <span class="min-w-0"><span class="font-medium">${esc(p.nom)}</span> <span class="text-xs text-gray-400">${esc(p.identifiant)} · ${p.role === 'admin' ? 'administration' : 'enseignant'}</span></span>
-    <span class="shrink-0"><button data-resetp="${esc(p.identifiant)}" class="text-blue-600 px-2" aria-label="Nouveau code"><i class="fa-solid fa-key"></i></button>${p.identifiant === (me.identifiant || '') ? '' : `<button data-delp="${esc(p.identifiant)}" class="text-red-500 px-2" aria-label="Supprimer"><i class="fa-solid fa-trash"></i></button>`}</span></div>`).join('')}</div>
+    <span class="min-w-0"><span class="font-medium">${esc(p.nom)}</span> <span class="text-xs text-gray-400">${esc(p.identifiant)} · ${p.role === 'admin' ? 'administration' : 'enseignant · ' + (new Set(aff.filter((a) => a.personnel_id === p.id).map((a) => a.classe_code)).size) + ' classe(s)'}</span></span>
+    <span class="shrink-0">${p.role === 'prof' ? `<button data-affp="${esc(p.id)}" class="text-green-700 px-2" aria-label="Classes et matières"><i class="fa-solid fa-chalkboard-user"></i></button>` : ''}<button data-resetp="${esc(p.identifiant)}" class="text-blue-600 px-2" aria-label="Nouveau code"><i class="fa-solid fa-key"></i></button>${p.identifiant === (me.identifiant || '') ? '' : `<button data-delp="${esc(p.identifiant)}" class="text-red-500 px-2" aria-label="Supprimer"><i class="fa-solid fa-trash"></i></button>`}</span></div>`).join('')}</div>
     <div class="bg-white rounded-xl shadow p-4"><h2 class="font-bold mb-3">Ajouter un compte</h2>
       <label class="block text-xs font-medium mb-1" for="p-nom">Nom complet</label><input id="p-nom" maxlength="60" placeholder="ex. Abdou Moussa" class="w-full border rounded-lg px-3 py-2 mb-3">
       <label class="block text-xs font-medium mb-1" for="p-role">Rôle</label><select id="p-role" class="w-full border rounded-lg px-3 py-2 mb-3"><option value="prof">Enseignant (saisit les notes)</option><option value="admin">Administration (tout faire)</option></select>
       <button data-act="add-pers" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg">Créer le compte</button></div>`;
 }
 async function persAction(action, body, ok) {
-  try { const d = await api(action, body); codes = d.code ? [d] : []; await vPersonnel($('contenu')); flash(ok, true); }
+  try { const d = await api(action, body); codes = d.code ? [d] : []; if (action === 'creer_personnel' && d.role === 'prof') { const r = await rest(`personnel?select=id&identifiant=eq.${d.identifiant}`); S.pers = r[0] && r[0].id; return aller('affect'); } await vPersonnel($('contenu')); flash(ok, true); }
   catch (e) { if (e.message !== 'session') flash(e.message, false); }
+}
+
+/* ---------- classes et matières d'un enseignant ---------- */
+async function vAffect(c) {
+  if (!admin()) return aller('home');
+  const p = equipe.find((x) => x.id === S.pers) || (await rest(`personnel?select=id,identifiant,nom,role&id=eq.${S.pers}`))[0];
+  if (!p) return aller('personnel');
+  try { aff = await rest('personnel_affectations?select=personnel_id,classe_code,matiere&limit=5000'); } catch (e) { if (e.message === 'session') return; }
+  const mes = aff.filter((a) => a.personnel_id === p.id);
+  const code = codes[0] && codes[0].identifiant === p.identifiant ? `<div class="bg-yellow-50 border border-yellow-300 rounded-xl p-4 mb-4"><p class="font-bold">Compte créé : ${esc(p.nom)}</p><p class="text-sm">Identifiant : <b>${esc(p.identifiant)}</b></p><p class="text-sm">Code : <b class="text-lg tracking-widest">${esc(codes[0].code)}</b></p><p class="text-xs text-red-600 mt-1">Note ce code maintenant : il ne sera plus affiché.</p></div>` : '';
+  c.innerHTML = FL + code + `<p class="mb-3 text-sm text-gray-600">Coche les matières que <b>${esc(p.nom)}</b> enseigne dans chaque classe. Il ne verra que ces classes et ces matières.</p>` +
+    classes.map((cl) => { const ms = matieres.filter((m) => m.classe_code === cl.code); return `<div class="bg-white rounded-xl shadow p-4 mb-3"><p class="font-bold mb-2">${esc(cl.nom)}</p>` +
+      (ms.length ? '<div class="flex flex-wrap gap-2">' + ms.map((m) => `<label class="flex items-center gap-1.5 border rounded-lg px-3 py-1.5 text-sm"><input type="checkbox" data-aff="${esc(cl.code)}" value="${esc(m.nom)}" ${mes.some((a) => a.classe_code === cl.code && a.matiere === m.nom) ? 'checked' : ''}> ${esc(m.nom)}</label>`).join('') + '</div>' : '<p class="text-xs text-gray-400">Aucune matière dans cette classe (ajoute-en depuis la classe).</p>') + '</div>'; }).join('') +
+    '<button data-act="save-aff" class="w-full mt-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-lg sticky bottom-3 shadow-lg"><i class="fa-solid fa-floppy-disk mr-1"></i>Enregistrer</button>';
+}
+async function saveAff() {
+  const lignes = [...document.querySelectorAll('input[data-aff]:checked')].map((i) => ({ personnel_id: S.pers, classe_code: i.dataset.aff, matiere: i.value }));
+  flash('Enregistrement…', true);
+  try {
+    await rest(`personnel_affectations?personnel_id=eq.${S.pers}`, { method: 'DELETE' });
+    if (lignes.length) await rest('personnel_affectations', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(lignes) });
+    flash(`Enregistré (${lignes.length} matière(s)).`, true);
+  } catch (e) { if (e.message !== 'session') flash(e.message, false); }
+}
+
+/* ---------- annonces (administration) ---------- */
+const CATS = ['Annonce officielle', 'Événement', 'Résultats', 'Vie scolaire'];
+const fdate = (d) => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+async function vAnnonces(c) {
+  if (!admin()) return aller('home');
+  try { actus = await rest('actualites?select=id,titre,categorie,contenu,publie,created_at&order=created_at.desc&limit=100'); } catch (e) { if (e.message === 'session') return; }
+  c.innerHTML = FL + `<div class="bg-white rounded-xl shadow p-4 mb-5"><h2 class="font-bold mb-3">Nouvelle annonce</h2>
+    <label class="block text-xs font-medium mb-1" for="a-titre">Titre</label><input id="a-titre" maxlength="120" class="w-full border rounded-lg px-3 py-2 mb-3">
+    <label class="block text-xs font-medium mb-1" for="a-cat">Catégorie</label><select id="a-cat" class="w-full border rounded-lg px-3 py-2 mb-3">${CATS.map((x) => `<option>${x}</option>`).join('')}</select>
+    <label class="block text-xs font-medium mb-1" for="a-txt">Texte</label><textarea id="a-txt" rows="4" maxlength="1500" class="w-full border rounded-lg px-3 py-2 mb-3"></textarea>
+    <button data-act="add-actu" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg">Publier sur le site</button></div>
+    <div class="bg-white rounded-xl shadow overflow-hidden divide-y">${actus.map((a) => `<div class="px-4 py-3"><div class="flex justify-between gap-2"><p class="font-semibold">${esc(a.titre)}</p>
+      <span class="shrink-0"><button data-pubactu="${a.id}" data-pub="${a.publie}" class="text-xs px-2 py-1 rounded ${a.publie ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}">${a.publie ? 'Publiée' : 'Masquée'}</button>
+      <button data-delactu="${a.id}" class="text-red-500 px-2" aria-label="Supprimer"><i class="fa-solid fa-trash"></i></button></span></div>
+      <p class="text-xs text-gray-400">${esc(a.categorie)} · ${fdate(a.created_at)}</p><p class="text-sm text-gray-700 mt-1">${esc(a.contenu)}</p></div>`).join('') || '<p class="p-4 text-sm text-gray-500">Aucune annonce.</p>'}</div>`;
+}
+async function addActu() {
+  const titre = $('a-titre').value.trim(), contenu = $('a-txt').value.trim();
+  if (!titre || !contenu) return flash('Titre et texte obligatoires.', false);
+  try { await rest('actualites', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ titre, contenu, categorie: $('a-cat').value, publie: true }) }); await vAnnonces($('contenu')); flash('Annonce publiée.', true); }
+  catch (e) { if (e.message !== 'session') flash(e.message, false); }
+}
+async function actuAction(id, fn, ok) {
+  try { await fn(); await vAnnonces($('contenu')); flash(ok, true); } catch (e) { if (e.message !== 'session') flash(e.message, false); }
+}
+
+/* ---------- inscriptions (administration) ---------- */
+async function vInscriptions(c) {
+  if (!admin()) return aller('home');
+  try { inscr = await rest('inscriptions?select=*&order=created_at.desc&limit=200'); } catch (e) { if (e.message === 'session') return; }
+  const nv = inscr.filter((i) => i.statut === 'nouvelle').length;
+  c.innerHTML = FL + `<p class="text-sm text-gray-600 mb-3">${inscr.length} demande(s) · ${nv} nouvelle(s)</p><div class="space-y-3">${inscr.map((i) => `<div class="bg-white rounded-xl shadow p-4 ${i.statut === 'nouvelle' ? 'border-l-4 border-yellow-500' : ''}">
+    <div class="flex justify-between gap-2"><p class="font-bold">${esc(i.prenom_eleve)} ${esc(i.nom_eleve)}</p><span class="text-xs text-gray-400">${fdate(i.created_at)}</span></div>
+    <p class="text-sm">Classe souhaitée : <b>${esc(i.classe_souhaitee || '—')}</b>${i.date_naissance ? ' · né(e) le ' + fdate(i.date_naissance) : ''}</p>
+    <p class="text-sm">Parent : ${esc(i.nom_parent || '—')} · <a class="text-blue-600" href="tel:${esc(i.telephone || '')}">${esc(i.telephone || '')}</a>${i.email ? ' · ' + esc(i.email) : ''}</p>
+    ${i.message ? `<p class="text-sm text-gray-600 mt-1">${esc(i.message)}</p>` : ''}
+    <div class="flex gap-2 mt-3"><button data-statut="${i.id}" data-to="${i.statut === 'nouvelle' ? 'traitee' : 'nouvelle'}" class="text-sm border rounded-lg px-3 py-1.5">${i.statut === 'nouvelle' ? 'Marquer comme traitée' : 'Remettre en nouvelle'}</button>
+    <button data-delinscr="${i.id}" class="text-sm text-red-600 px-2">Supprimer</button></div></div>`).join('') || '<p class="text-center text-gray-500">Aucune inscription pour le moment.</p>'}</div>`;
+}
+async function inscrAction(fn, ok) {
+  try { await fn(); await vInscriptions($('contenu')); flash(ok, true); } catch (e) { if (e.message !== 'session') flash(e.message, false); }
 }
 
 /* ---------- évènements ---------- */
@@ -370,6 +439,11 @@ document.addEventListener('click', (e) => {
   if ((x = t('[data-tri]'))) { S.tri = x.dataset.tri; return rendre(); }
   if ((x = t('[data-type]'))) { S.type = x.dataset.type; S.num = 1; return rendre(); }
   if ((x = t('[data-num]'))) { S.num = Number(x.dataset.num); return rendre(); }
+  if ((x = t('[data-affp]'))) { S.pers = x.dataset.affp; return aller('affect'); }
+  if ((x = t('[data-pubactu]'))) return actuAction(0, () => rest(`actualites?id=eq.${x.dataset.pubactu}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ publie: x.dataset.pub !== 'true' }) }), 'Modifié.');
+  if ((x = t('[data-delactu]'))) return confirm('Supprimer cette annonce ?') && actuAction(0, () => rest(`actualites?id=eq.${x.dataset.delactu}`, { method: 'DELETE' }), 'Annonce supprimée.');
+  if ((x = t('[data-statut]'))) return inscrAction(() => rest(`inscriptions?id=eq.${x.dataset.statut}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ statut: x.dataset.to }) }), 'Modifié.');
+  if ((x = t('[data-delinscr]'))) return confirm('Supprimer cette demande ?') && inscrAction(() => rest(`inscriptions?id=eq.${x.dataset.delinscr}`, { method: 'DELETE' }), 'Demande supprimée.');
   if ((x = t('[data-resetp]'))) return confirm('Créer un nouveau code pour ce compte ?') && persAction('reset_personnel', { identifiant: x.dataset.resetp }, 'Nouveau code créé.');
   if ((x = t('[data-delp]'))) return confirm('Supprimer ce compte ?') && persAction('supprimer_personnel', { identifiant: x.dataset.delp }, 'Compte supprimé.');
   if ((x = t('[data-reset]'))) return resetCode(x.dataset.reset);
@@ -378,6 +452,8 @@ document.addEventListener('click', (e) => {
   if ((x = t('[data-act]'))) {
     const a = x.dataset.act;
     if (a === 'add-pers') return persAction('creer_personnel', { nom: $('p-nom').value, role: $('p-role').value }, 'Compte créé.');
+    if (a === 'save-aff') return saveAff();
+    if (a === 'add-actu') return addActu();
     if (a === 'save-eleves') return saveEleves();
     if (a === 'save-notes') return saveNotes();
     if (a === 'add-matiere') return addMatiere();
