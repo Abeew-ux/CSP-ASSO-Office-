@@ -117,7 +117,42 @@ async function resetClasse({ classe }) {
   return { codes: res.filter((r) => r.code), erreurs: res.filter((r) => r.erreur).map((r) => `${r.matricule} : ${r.erreur}`) };
 }
 
-const ACTIONS = { enregistrer_eleves: enregistrerEleves, supprimer_eleve: supprimerEleve, supprimer_classe: supprimerClasse, reset_code: resetCode, reset_classe: resetClasse };
+async function creerPersonnel({ nom, role }) {
+  const n = clean(nom);
+  const r = role === 'admin' ? 'admin' : 'prof';
+  const identifiant = n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!n || !identifiant) throw new Error('Nom obligatoire');
+  const code = genCode();
+  const { data, error } = await db.auth.admin.createUser({ email: emailOf(identifiant), password: code, email_confirm: true });
+  if (error) throw new Error(/already|exist|registered/i.test(error.message) ? 'Cet identifiant existe déjà, ajoute un chiffre ou une initiale au nom' : error.message);
+  const { error: e2 } = await db.from('personnel').insert({ id: data.user.id, identifiant, nom: n, role: r });
+  if (e2) { await db.auth.admin.deleteUser(data.user.id); throw new Error(e2.message); }
+  return { nom: n, role: r, identifiant, code };
+}
+
+async function persParIdent(identifiant) {
+  const { data } = await db.from('personnel').select('id, nom, identifiant, role').eq('identifiant', String(identifiant ?? '').toLowerCase()).maybeSingle();
+  if (!data) throw new Error('Compte introuvable');
+  return data;
+}
+
+async function resetPersonnel({ identifiant }) {
+  const p = await persParIdent(identifiant);
+  const code = genCode();
+  const { error } = await db.auth.admin.updateUserById(p.id, { password: code });
+  if (error) throw new Error(error.message);
+  return { nom: p.nom, identifiant: p.identifiant, code };
+}
+
+async function supprimerPersonnel({ identifiant }, moi) {
+  const p = await persParIdent(identifiant);
+  if (p.id === moi) throw new Error('Tu ne peux pas supprimer ton propre compte');
+  const { error } = await db.auth.admin.deleteUser(p.id);
+  if (error) throw new Error(error.message);
+  return { ok: true };
+}
+
+const ACTIONS = { enregistrer_eleves: enregistrerEleves, supprimer_eleve: supprimerEleve, supprimer_classe: supprimerClasse, creer_personnel: creerPersonnel, reset_personnel: resetPersonnel, supprimer_personnel: supprimerPersonnel, reset_code: resetCode, reset_classe: resetClasse };
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -137,10 +172,10 @@ export default async function handler(req, res) {
     const { action, ...args } = req.body || {};
     const fn = ACTIONS[action];
     if (!fn) return res.status(400).json({ erreur: 'Action inconnue' });
-    return res.status(200).json(await fn(args));
+    return res.status(200).json(await fn(args, u.user.id));
   } catch (e) {
     console.error(e);
     return res.status(400).json({ erreur: e.message || 'Erreur' });
   }
   }
-                                     
+    
